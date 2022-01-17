@@ -1,0 +1,69 @@
+---
+
+- name: zabbix agent
+  hosts: all
+  become: yes
+  vars:
+      path_agent: "{{ 'zabbix' if ansible_distribution == 'CentOS' else 'zabbix-agent' }}"
+      path_agent_include: "{{ 'zabbix_agentd.d' if ansible_distribution == 'CentOS' else 'zabbix_agentd.conf.d' }}"
+      repo_href: "{{ 'https://repo.zabbix.com/zabbix/5.4/rhel/8/x86_64/zabbix-release-5.4-1.el8.noarch.rpm' if ansible_distribution == 'CentOS' else 'https://repo.zabbix.com/zabbix/5.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_5.4-1+ubuntu20.04_all.deb' }}"
+  tasks:
+  - block: # ======Install zabbix agent on Ubuntu======
+   
+      - name: Download zabbix repo package on Ubuntu
+        get_url:
+            url: "{{ repo_href }}"
+            dest: /tmp/zabbix.deb
+
+      - name: Install zabbix repo on Ubuntu
+        apt:
+            deb: /tmp/zabbix.deb
+            state: present
+
+      - name: Install zabbix agent on Ubuntu
+        apt:
+            name: zabbix-agent
+            state: present
+        notify:
+            zabbix-agent systemd
+      
+      
+    when: ansible_distribution == "Ubuntu"
+  
+  - block: # ======Install zabbix agent on CentOS======     
+      - name: Install Zabbix repo on CentOS
+        command: "rpm -Uvh --force {{ item.href }} creates={{ item.creates }}"
+        with_items:
+           - href: "{{ repo_href }}"
+             creates: "/etc/yum.repos.d/zabbix.repo" 
+
+      - name: Install zabbix agent on CentOS
+        yum:
+            name: zabbix-agent
+            state: present
+        notify:
+            zabbix-agent systemd
+                   
+    when: ansible_distribution == "CentOS"
+
+  - name: Flush handlers
+    meta: flush_handlers
+
+  - name: Create new zabbix config file from template
+    template:
+          src: "zabbix_agentd.conf.j2"
+          dest: "/etc/zabbix/zabbix_agentd.conf"
+    notify: Start service zabbix-agent
+     
+  handlers:
+      - name: zabbix-agent systemd
+        systemd:
+         name: zabbix-agent.service
+         enabled: yes
+         state: stopped
+
+      - name: Start service zabbix-agent
+        service:
+           name: zabbix-agent
+           state: restarted
+
